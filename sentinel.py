@@ -1,5 +1,5 @@
-# sentinel.py - ежечасный снимок KuCoin: funding + spread + basis; алерт по упорному экстремуму
-import csv, json, os, time
+# sentinel.py v4 - per-run files in data/, alert on persistent funding extremes
+import csv, glob, json, os, time
 import urllib.request
 
 FUT = ["BTCUSDTM", "ETHUSDTM", "SOLUSDTM", "XRPUSDTM", "ADAUSDTM", "DOGEUSDTM",
@@ -9,8 +9,9 @@ TH = float(os.environ.get("SENT_TH", "0.0005"))
 NEED = int(os.environ.get("SENT_NEED", "3"))
 FBASE = "https://api-futures.kucoin.com"
 SBASE = "https://api.kucoin.com"
-OUT = "snapshot.csv"
-ALERT = "alert.txt"
+OUTDIR = "data"
+HDR = ["ts", "symbol", "funding", "predicted", "timePoint",
+       "perpLast", "spreadPct", "spotLast", "basisPct"]
 
 def get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
@@ -36,6 +37,7 @@ def fnum(d, *keys):
     return None
 
 def main():
+    os.makedirs(OUTDIR, exist_ok=True)
     now = int(time.time())
     d = get(FBASE + "/api/v1/allTickers")
     tickers = d.get("tickers") if isinstance(d, dict) else d
@@ -54,55 +56,53 @@ def main():
         fr = fnum(fd, "value", "fundingRate")
         pr = fnum(fd, "predictedValue", "nextFundingRate")
         tp = fnum(fd, "timePoint")
+        if fr is None and pr is None:
+            print("DEBUG %s funding raw=%s" % (s, str(fd)[:200]))
         if tp is None:
             tp = float(now // 28800)
-        tp = int(tp)
         last, sp = fmap.get(s, (None, None))
         spot = st.get(s[:-1].replace("USDT", "-USDT"))
         basis = 100.0 * (last - spot) / spot if last and spot else None
-        rows.append([now, s, fr, pr, tp, last, sp, spot, basis])
-        print("%s funding=%s pred=%s tp=%d spread=%s basis=%s" %
-              (s, fr, pr, tp, sp, basis), flush=True)
-    old = []
-    if os.path.exists(OUT):
-        with open(OUT, newline="") as f:
-            rd = csv.reader(f)
-            if next(rd, None):
-                old = list(rd)
-    with open(OUT, "w", newline="") as f:
+        rows.append([now, s, fr, pr, int(tp), last, sp, spot, basis])
+        print("%s funding=%s pred=%s spread=%s basis=%s" % (s, fr, pr, sp, basis), flush=True)
+    fn = os.path.join(OUTDIR, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + ".csv")
+    with open(fn, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["ts", "symbol", "funding", "predicted", "timePoint",
-                    "perpLast", "spreadPct", "spotLast", "basisPct"])
-        for r in old:
-            w.writerow(r)
+        w.writerow(HDR)
         for r in rows:
             w.writerow(["" if x is None else x for x in r])
+    print("wrote " + fn)
+
     series = {}
-    for r in old + [[str(x) if x is not None else "" for x in row] for row in rows]:
-        if len(r) < 5:
-            continue
-        try:
-            v = r[3] or r[2]
-            if v == "":
-                continue
-            series.setdefault(r[1], {})[int(float(r[4]))] = abs(float(v))
-        except Exception:
-            pass
+    files = sorted(glob.glob(os.path.join(OUTDIR, "*.csv")))[-60:]
+    for fp in files:
+        with open(fp, newline="") as f:
+            rd = csv.reader(f)
+            next(rd, None)
+            for r in rd:
+                if len(r) < 5:
+                    continue
+                v = r[3] or r[2]
+                if v == "":
+                    continue
+                try:
+                    series.setdefault(r[1], {})[int(float(r[4]))] = abs(float(v))
+                except Exception:
+                    pass
     alerts = []
     for s, m in series.items():
         tps = sorted(m)[-NEED:]
         if len(tps) == NEED and all(m[t] >= TH for t in tps):
-            apr = m[tps[-1]] * 3 * 365 * 100.0
-            side = "SHORT perp / long spot" if m[tps[-1]] == m[tps[-1]] else ""
-            alerts.append("%s: |funding|=%.4f%%/8h x%d эпох, APR~%.0f%%" %
-                          (s, m[tps[-1]] * 100.0, NEED, apr))
+            lastf = m[tps[-1]]
+            alerts.append("%s: |funding|=%.4f%%/8h x%d epochs, APR~%.0f%%, carry: %s perp" %
+                          (s, lastf * 100.0, NEED, lastf * 3 * 365 * 100.0,
+                           "long" if lastf < 0 else "short"))
     if alerts:
-        with open(ALERT, "w") as f:
+        with open("alert.txt", "w") as f:
             f.write("CARRY CANDIDATES (KuCoin):\n" + "\n".join(alerts))
         print("ALERT:\n" + "\n".join(alerts))
-    elif os.path.exists(ALERT):
-        os.remove(ALERT)
-    print("done rows_now=%d history=%d" % (len(rows), len(old)))
+    print("done files=%d symbols=%d" % (len(files), len(series)))
 
 if __name__ == "__main__":
     main()
+
