@@ -2,7 +2,7 @@
 import csv, glob, json, os, time
 import urllib.request
 
-FUT = ["BTCUSDTM", "ETHUSDTM", "SOLUSDTM", "XRPUSDTM", "ADAUSDTM", "DOGEUSDTM",
+FUT = ["XBTCUSDTM", "ETHUSDTM", "SOLUSDTM", "XRPUSDTM", "ADAUSDTM", "DOGEUSDTM",
        "UNIUSDTM", "JCTUSDTM", "LUNAUSDTM", "LISTAUSDTM", "UBUSDTM", "UAIUSDTM",
        "CTCUSDTM", "SHIBUSDTM"]
 TH = float(os.environ.get("SENT_TH", "0.0005"))
@@ -61,7 +61,7 @@ def main():
         if tp is None:
             tp = float(now // 28800)
         last, sp = fmap.get(s, (None, None))
-        spot = st.get(s[:-1].replace("USDT", "-USDT"))
+        spot = st.get("BTC-USDT" if s == "XBTUSDTM" else s[:-1].replace("USDT", "-USDT"))
         basis = 100.0 * (last - spot) / spot if last and spot else None
         rows.append([now, s, fr, pr, int(tp), last, sp, spot, basis])
         print("%s funding=%s pred=%s spread=%s basis=%s" % (s, fr, pr, sp, basis), flush=True)
