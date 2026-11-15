@@ -2,7 +2,7 @@
 import csv, glob, json, os, time
 import urllib.request
 
-FUT = ["XBTCUSDTM", "ETHUSDTM", "SOLUSDTM", "XRPUSDTM", "ADAUSDTM", "DOGEUSDTM",
+FUT = ["XBTCUSDT", "ETHUSDTM", "SOLUSDTM", "XRPUSDTM", "ADAUSDTM", "DOGEUSDTM",
        "UNIUSDTM", "JCTUSDTM", "LUNAUSDTM", "LISTAUSDTM", "UBUSDTM", "UAIUSDTM",
        "CTCUSDTM", "SHIBUSDTM"]
 TH = float(os.environ.get("SENT_TH", "0.0005"))
