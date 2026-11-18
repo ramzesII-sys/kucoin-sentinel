@@ -1,4 +1,4 @@
-# sentinel.py v5 - universe scan of all KuCoin USDTM perps, liquidity-gated carry alerts
+ # sentinel.py v5.1 - universe scan of all KuCoin USDTM perps, liquidity-gated carry alerts
 import csv, glob, json, os, time
 import urllib.request
 
@@ -8,6 +8,7 @@ SPOT_URL = "https://api.kucoin.com/api/v1/market/allTickers"
 TH = float(os.environ.get("SENT_TH", "0.0005"))
 NEED = int(os.environ.get("SENT_NEED", "3"))
 SMAX = float(os.environ.get("SENT_SMAX", "0.5"))
+BMAX = float(os.environ.get("SENT_BMAX", "1.5"))
 PAUSE = float(os.environ.get("SENT_PAUSE", "0.13"))
 OUTDIR = "data"
 HDR = ["ts", "symbol", "funding", "predicted", "timePoint",
@@ -112,7 +113,9 @@ def main():
                         series.setdefault(s, {})[tp] = float(v)
                         sp = r.get("spreadPct")
                         ok = float(sp) <= SMAX if sp not in (None, "") else False
-                        meta.setdefault(s, {})[tp] = (ok, str(r.get("hasSpot", "1")) != "0")
+                        bas = r.get("basisPct")
+                        bok = abs(float(bas)) <= BMAX if bas not in (None, "") else False
+                        meta.setdefault(s, {})[tp] = (ok, str(r.get("hasSpot", "1")) != "0", bok)
                     except Exception:
                         pass
         except Exception:
@@ -124,8 +127,9 @@ def main():
             continue
         if not all(abs(m[t]) >= TH for t in tps):
             continue
-        if not all(meta.get(s, {}).get(t, (False, False))[0] and
-                   meta.get(s, {}).get(t, (False, False))[1] for t in tps):
+        if not all(meta.get(s, {}).get(t, (False, False, False))[0] and
+                   meta.get(s, {}).get(t, (False, False, False))[1] and
+                   meta.get(s, {}).get(t, (False, False, False))[2] for t in tps):
             continue
         hrs = (tps[-1] - tps[0]) / (NEED - 1) / 3600000.0
         if hrs <= 0:
