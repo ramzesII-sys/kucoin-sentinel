@@ -1,17 +1,17 @@
-# sentinel.py v4 - per-run files in data/, alert on persistent funding extremes
+# sentinel.py v5 - universe scan of all KuCoin USDTM perps, liquidity-gated carry alerts
 import csv, glob, json, os, time
 import urllib.request
 
-FUT = ["XBTUSDTM", "ETHUSDTM", "SOLUSDTM", "XRPUSDTM", "ADAUSDTM", "DOGEUSDTM",
-       "UNIUSDTM", "JCTUSDTM", "LUNAUSDTM", "LISTAUSDTM", "UBUSDTM", "UAIUSDTM",
-       "CTCUSDTM", "SHIBUSDTM"]
+FUT_URL = "https://api-futures.kucoin.com/api/v1/allTickers"
+FUN_URL = "https://api-futures.kucoin.com/api/v1/funding-rate/%s/current"
+SPOT_URL = "https://api.kucoin.com/api/v1/market/allTickers"
 TH = float(os.environ.get("SENT_TH", "0.0005"))
 NEED = int(os.environ.get("SENT_NEED", "3"))
-FBASE = "https://api-futures.kucoin.com"
-SBASE = "https://api.kucoin.com"
+SMAX = float(os.environ.get("SENT_SMAX", "0.5"))
+PAUSE = float(os.environ.get("SENT_PAUSE", "0.13"))
 OUTDIR = "data"
 HDR = ["ts", "symbol", "funding", "predicted", "timePoint",
-       "perpLast", "spreadPct", "spotLast", "basisPct"]
+       "spreadPct", "hasSpot", "perpLast", "spotLast", "basisPct"]
 
 def get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
@@ -36,73 +36,118 @@ def fnum(d, *keys):
             pass
     return None
 
+def spot_pair(sym):
+    s = sym[:-1]
+    if s.startswith("XBT"):
+        s = "BTC" + s[3:]
+    return s.replace("USDT", "-USDT")
+
 def main():
     os.makedirs(OUTDIR, exist_ok=True)
     now = int(time.time())
-    d = get(FBASE + "/api/v1/allTickers")
-    tickers = d.get("tickers") if isinstance(d, dict) else d
-    fmap = {}
-    for t in tickers or []:
-        bid = fnum(t, "bestBidPrice"); ask = fnum(t, "bestAskPrice")
+    d = get(FUT_URL)
+    tickers = (d.get("tickers") if isinstance(d, dict) else d) or []
+    fmap, spread = {}, {}
+    for t in tickers:
+        s = t.get("symbol", "")
+        if not s.endswith("USDTM"):
+            continue
+        bid, ask = fnum(t, "bestBidPrice"), fnum(t, "bestAskPrice")
         sp = 100.0 * (ask - bid) / ((ask + bid) / 2.0) if bid and ask and bid > 0 else None
-        fmap[t.get("symbol")] = (fnum(t, "price", "lastTradePrice"), sp)
-    d = get(SBASE + "/api/v1/market/allTickers")
-    st = {}
+        spread[s] = sp
+        fmap[s] = fnum(t, "price", "lastTradePrice")
+    d = get(SPOT_URL)
+    spot = {}
     for t in (d.get("ticker") if isinstance(d, dict) else None) or []:
-        st[t.get("symbol")] = fnum(t, "last")
+        spot[t.get("symbol")] = fnum(t, "last")
+    cand = []
+    for s in sorted(fmap):
+        sp = spread.get(s)
+        if sp is None or sp > SMAX:
+            continue
+        if spot_pair(s) not in spot:
+            continue
+        cand.append(s)
+    print("universe=%d candidates=%d (spread<=%.2f%% & spot exists)" %
+          (len(fmap), len(cand), SMAX), flush=True)
     rows = []
-    for s in FUT:
-        fd = get(FBASE + "/api/v1/funding-rate/" + s + "/current")
-        fr = fnum(fd, "value", "fundingRate")
-        pr = fnum(fd, "predictedValue", "nextFundingRate")
-        tp = fnum(fd, "timePoint")
-        if fr is None and pr is None:
-            print("DEBUG %s funding raw=%s" % (s, str(fd)[:200]))
+    nfun = 0
+    for s in cand:
+        fd = get(FUN_URL % s)
+        nfun += 1
+        if nfun % 100 == 0:
+            print("  funding %d/%d" % (nfun, len(cand)), flush=True)
+        time.sleep(PAUSE)
+        fr, pr, tp = fnum(fd, "value", "fundingRate"), \
+            fnum(fd, "predictedValue", "nextFundingRate"), fnum(fd, "timePoint")
         if tp is None:
-            tp = float(now // 28800)
-        last, sp = fmap.get(s, (None, None))
-        spot = st.get("BTC-USDT" if s == "XBTUSDTM" else s[:-1].replace("USDT", "-USDT"))
-        basis = 100.0 * (last - spot) / spot if last and spot else None
-        rows.append([now, s, fr, pr, int(tp), last, sp, spot, basis])
-        print("%s funding=%s pred=%s spread=%s basis=%s" % (s, fr, pr, sp, basis), flush=True)
+            continue
+        sp = spread[s]
+        last = fmap[s]
+        sl = spot.get(spot_pair(s))
+        basis = 100.0 * (last - sl) / sl if last and sl else None
+        rows.append([now, s, fr, pr, int(tp), sp, 1, last, sl, basis])
     fn = os.path.join(OUTDIR, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + ".csv")
     with open(fn, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(HDR)
         for r in rows:
             w.writerow(["" if x is None else x for x in r])
-    print("wrote " + fn)
+    print("wrote %s rows=%d" % (fn, len(rows)))
 
     series = {}
-    files = sorted(glob.glob(os.path.join(OUTDIR, "*.csv")))[-60:]
+    meta = {}
+    files = sorted(glob.glob(os.path.join(OUTDIR, "*.csv")))[-90:]
     for fp in files:
-        with open(fp, newline="") as f:
-            rd = csv.reader(f)
-            next(rd, None)
-            for r in rd:
-                if len(r) < 5:
-                    continue
-                v = r[3] or r[2]
-                if v == "":
-                    continue
-                try:
-                    series.setdefault(r[1], {})[int(float(r[4]))] = abs(float(v))
-                except Exception:
-                    pass
+        try:
+            with open(fp, newline="") as f:
+                rd = csv.DictReader(f)
+                for r in rd:
+                    s = r.get("symbol")
+                    v = (r.get("predicted") or "") or (r.get("funding") or "")
+                    if not s or v == "":
+                        continue
+                    try:
+                        tp = int(float(r["timePoint"]))
+                        series.setdefault(s, {})[tp] = float(v)
+                        sp = r.get("spreadPct")
+                        ok = float(sp) <= SMAX if sp not in (None, "") else False
+                        meta.setdefault(s, {})[tp] = (ok, str(r.get("hasSpot", "1")) != "0")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     alerts = []
     for s, m in series.items():
         tps = sorted(m)[-NEED:]
-        if len(tps) == NEED and all(m[t] >= TH for t in tps):
-            lastf = m[tps[-1]]
-            alerts.append("%s: |funding|=%.4f%%/8h x%d epochs, APR~%.0f%%, carry: %s perp" %
-                          (s, lastf * 100.0, NEED, lastf * 3 * 365 * 100.0,
-                           "long" if lastf < 0 else "short"))
+        if len(tps) < NEED:
+            continue
+        if not all(abs(m[t]) >= TH for t in tps):
+            continue
+        if not all(meta.get(s, {}).get(t, (False, False))[0] and
+                   meta.get(s, {}).get(t, (False, False))[1] for t in tps):
+            continue
+        hrs = (tps[-1] - tps[0]) / (NEED - 1) / 3600000.0
+        if hrs <= 0:
+            continue
+        perday = 24.0 / hrs
+        apr = m[tps[-1]] * perday * 365.0 * 100.0
+        sp = spread.get(s)
+        ba = None
+        if sp is not None:
+            last = fmap.get(s); sl = spot.get(spot_pair(s))
+            ba = 100.0 * (last - sl) / sl if last and sl else None
+        carry = "long perp / short spot" if m[tps[-1]] < 0 else "short perp / long spot"
+        alerts.append("%s: funding=%.4f%% x%d ep (%.0fh each), APR~%+.0f%%, spread=%.3f%%, basis=%s, carry: %s" %
+                      (s, m[tps[-1]] * 100.0, NEED, hrs, apr, sp if sp is not None else -1,
+                       ("%+.3f%%" % ba) if ba is not None else "?", carry))
     if alerts:
         with open("alert.txt", "w") as f:
-            f.write("CARRY CANDIDATES (KuCoin):\n" + "\n".join(alerts))
+            f.write("CARRY CANDIDATES (KuCoin, liquidity-gated):\n" + "\n".join(alerts))
         print("ALERT:\n" + "\n".join(alerts))
+    else:
+        print("no candidates")
     print("done files=%d symbols=%d" % (len(files), len(series)))
 
 if __name__ == "__main__":
     main()
-
