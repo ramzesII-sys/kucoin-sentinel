@@ -1,30 +1,26 @@
 name: sentinel
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "23 * * * *"
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: snapshot
+  cancel-in-progress: false
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: snapshot
         run: python sentinel.py
-      - name: commit
-        run: |
-          git config user.name sentinel-bot
-          git config user.email sentinel@users.noreply.github.com
-          git add snapshot.csv
-          if ! git diff --cached --quiet; then
-            git commit -m "snapshot $(date -u +%FT%TZ)"
-            git push
-          fi
-      - name: telegram
+      - name: carry-paper
+        run: python carry_paper.py
+      - name: telegram-alert
         if: always()
         env:
           TGT: ${{ secrets.TG_TOKEN }}
@@ -34,3 +30,26 @@ jobs:
             curl -s -m 15 "https://api.telegram.org/bot$TGT/sendMessage" \
               -d chat_id="$CHAT" --data-urlencode text@alert.txt || true
           fi
+      - name: telegram-carry
+        if: always()
+        env:
+          TGT: ${{ secrets.TG_TOKEN }}
+          CHAT: ${{ secrets.TG_CHAT }}
+        run: |
+          CH=$(git status --porcelain -- carry/digest.txt)
+          if [ -n "$CH" ] && [ -n "$TGT" ] && [ -s carry/digest.txt ]; then
+            curl -s -m 15 "https://api.telegram.org/bot$TGT/sendMessage" \
+              -d chat_id="$CHAT" --data-urlencode text@carry/digest.txt || true
+          fi
+      - name: commit
+        run: |
+          git config user.name sentinel-bot
+          git config user.email sentinel@users.noreply.github.com
+          git add data/ carry/
+          if git diff --cached --quiet; then echo NO-CHANGES; exit 0; fi
+          git commit -m "snap $(date -u +%FT%TZ)"
+          for i in 1 2 3; do
+            git pull --rebase origin "$GITHUB_REF_NAME" && break || { git rebase --abort; sleep 4; }
+          done
+          git push origin "HEAD:$GITHUB_REF_NAME"
+          echo PUSHED
