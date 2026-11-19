@@ -1,4 +1,4 @@
- # sentinel.py v5.1 - universe scan of all KuCoin USDTM perps, liquidity-gated carry alerts
+# sentinel.py v5.1 - universe scan of all KuCoin USDTM perps, liquidity-gated carry alerts
 import csv, glob, json, os, time
 import urllib.request
 
