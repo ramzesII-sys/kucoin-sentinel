@@ -1,2 +1,3 @@
 ts,symbol,status,days,epochs,fund_pct_cum,fund_usd,basis_open_pct,basis_now_pct,basis_usd,net_usd,close_reason
 2026-11-19T19:02Z,ARIAUSDTM,OPEN,0.0,0,0,0.0,0.5739670558635126,0.5739670558635126,0.0,-0.4,
+2026-11-20T01:22Z,ARIAUSDTM,OPEN,0.26,1,0.00094,0.0005,0.5739670558635126,0.9490568257578859,-0.1875,-0.5871,
