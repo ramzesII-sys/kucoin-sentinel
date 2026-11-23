@@ -1,2 +1,2 @@
 CARRY PAPER ARIA ($50 spot + $50 short perp, fees $0.40 roundtrip):
-ARIAUSDTM OPEN D3 ep12 fund+0.00$ basis-0.38$ net-0.77$
+ARIAUSDTM OPEN D4 ep13 fund+0.01$ basis-0.13$ net-0.53$
