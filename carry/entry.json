@@ -3,6 +3,8 @@
   "entry_ts": 1795114975,
   "entry_tp": 1795104000000,
   "basis_open": 0.5739670558635126,
-  "status": "OPEN"
+  "status": "CLOSED",
+  "close_ts": 1795568132,
+  "close_reason": "funding_dead"
  }
 }
