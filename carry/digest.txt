@@ -1,2 +1,2 @@
 CARRY PAPER ARIA ($50 spot + $50 short perp, fees $0.40 roundtrip):
-ARIAUSDTM CLOSED D5 ep23 fund+0.01$ basis+0.03$ net-0.36$
+ARIAUSDTM CLOSED D5 ep24 fund+0.01$ basis-0.02$ net-0.41$
